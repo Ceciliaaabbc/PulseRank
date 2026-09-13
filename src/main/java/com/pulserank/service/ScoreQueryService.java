@@ -3,6 +3,8 @@ package com.pulserank.service;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.pulserank.dto.CachedScore;
 import com.pulserank.dto.ProductScoreResponse;
+import com.pulserank.governance.CircuitBreaker;
+import com.pulserank.governance.HotKeyDetector;
 import com.pulserank.repository.ShardedRatingRepository;
 import org.redisson.api.RBucket;
 import org.redisson.api.RLock;
@@ -28,16 +30,24 @@ public class ScoreQueryService {
     private final ShardedRatingRepository ratingRepository;
     private final RedissonClient redissonClient;
     private final Cache<Long, CachedScore> localCache;
+    private final CircuitBreaker circuitBreaker;
+    private final HotKeyDetector hotKeyDetector;
 
     public ScoreQueryService(ShardedRatingRepository ratingRepository,
                               RedissonClient redissonClient,
-                              Cache<Long, CachedScore> localCache) {
+                              Cache<Long, CachedScore> localCache,
+                              CircuitBreaker circuitBreaker,
+                              HotKeyDetector hotKeyDetector) {
         this.ratingRepository = ratingRepository;
         this.redissonClient = redissonClient;
         this.localCache = localCache;
+        this.circuitBreaker = circuitBreaker;
+        this.hotKeyDetector = hotKeyDetector;
     }
 
     public ProductScoreResponse getProductScore(Long productId) {
+        hotKeyDetector.recordAccess(productId);
+
         CachedScore cached = localCache.getIfPresent(productId);
         if (cached != null) {
             return toResponse(productId, cached, "L1");
@@ -71,7 +81,10 @@ public class ScoreQueryService {
                     localCache.put(productId, cached);
                     return toResponse(productId, cached, "L2");
                 }
-                CachedScore fresh = queryDatabase(productId);
+                CachedScore fresh = queryDatabaseGuarded(productId);
+                if (fresh == null) {
+                    return degraded(productId);
+                }
                 bucket.set(fresh, REDIS_TTL);
                 localCache.put(productId, fresh);
                 return toResponse(productId, fresh, "DB");
@@ -94,12 +107,43 @@ public class ScoreQueryService {
         }
 
         log.warn("productId={} 等锁超时仍未等到缓存重建，降级直接查库", productId);
-        return toResponse(productId, queryDatabase(productId), "DB-fallback");
+        CachedScore fresh = queryDatabaseGuarded(productId);
+        if (fresh == null) {
+            return degraded(productId);
+        }
+        return toResponse(productId, fresh, "DB-fallback");
+    }
+
+    /**
+     * 熔断器包一层数据库查询：熔断处于 OPEN 时直接不查库，快速返回降级结果；
+     * CLOSED/HALF_OPEN 时才真正尝试查询，查询异常记一次失败、成功记一次成功。
+     * 降级结果不会写回 L1/L2 缓存——不然数据库恢复之后，这条"0/0"的假数据
+     * 还会在缓存里赖到 TTL 结束才刷新。
+     */
+    private CachedScore queryDatabaseGuarded(Long productId) {
+        if (!circuitBreaker.allowRequest()) {
+            log.warn("CIRCUIT_OPEN productId={} 熔断已打开，跳过数据库直接降级", productId);
+            return null;
+        }
+        try {
+            CachedScore result = queryDatabase(productId);
+            circuitBreaker.recordSuccess();
+            return result;
+        } catch (RuntimeException e) {
+            circuitBreaker.recordFailure();
+            log.warn("DB_QUERY_FAILED productId={} circuitState={} error={}",
+                    productId, circuitBreaker.getState(), e.getMessage());
+            return null;
+        }
     }
 
     private CachedScore queryDatabase(Long productId) {
         log.info("DB_QUERY productId={} shard={}", productId, ShardedRatingRepository.shardOf(productId));
         return ratingRepository.aggregateByProductId(productId);
+    }
+
+    private ProductScoreResponse degraded(Long productId) {
+        return new ProductScoreResponse(productId, 0.0, 0, "DEGRADED");
     }
 
     public void evict(Long productId) {

@@ -6,6 +6,8 @@ spring:
     username: ${DB_USERNAME:pulserank}
     password: ${DB_PASSWORD:pulserank123}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:2000}
   sql:
     init:
       mode: always
@@ -30,3 +32,10 @@ pulserank:
   redis:
     host: ${REDIS_HOST:localhost}
     port: ${REDIS_PORT:6379}
+  ratelimit:
+    capacity: ${RATELIMIT_CAPACITY:50}
+    refill-per-second: ${RATELIMIT_REFILL:20}
+  circuit-breaker:
+    failure-threshold: ${CB_FAILURE_THRESHOLD:5}
+    open-duration-ms: ${CB_OPEN_DURATION_MS:5000}
+    half-open-trial-count: ${CB_HALF_OPEN_TRIALS:2}

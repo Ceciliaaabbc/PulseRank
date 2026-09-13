@@ -11,13 +11,14 @@
 - Caffeine（L1 本地缓存）+ Redisson（L2 Redis 缓存 / 分布式锁 / 防缓存击穿）
 - 手写按 `product_id` 取模的分表路由（`rating_0`～`rating_3`，为什么没用 ShardingSphere 见阶段1 文档）
 - 评分写入走 Kafka 异步削峰，`POST /api/ratings` 只发消息立即返回，落库交给消费者异步完成（见阶段2 文档）
+- 自研分布式流量控制组件（`com.pulserank.governance`）：Redis+Lua 实现的分布式令牌桶限流、熔断状态机、热点探测自动延长本地缓存 TTL（见阶段3 文档）
 
 ## 项目进度
 
 - [x] 阶段0：脚手架 + 核心链路打通（详见 [docs/阶段0.md](docs/阶段0.md)）
 - [x] 阶段1：多级缓存 + 分布式锁防击穿 + 分库分表（详见 [docs/阶段1.md](docs/阶段1.md)）
 - [x] 阶段2：Kafka 异步削峰（详见 [docs/阶段2.md](docs/阶段2.md)）
-- [ ] 阶段3：自研分布式流量控制组件
+- [x] 阶段3：自研分布式流量控制组件（详见 [docs/阶段3.md](docs/阶段3.md)）
 - [ ] 阶段4：JVM 深度优化
 - [ ] 阶段5：全链路压测 + 混沌工程
 - [ ] 阶段6：Linux/TCP 调优 + 可观测性
@@ -33,4 +34,4 @@ java -jar target/pulserank-0.0.1-SNAPSHOT.jar   # 默认端口 8081
 ## API
 
 - `POST /api/ratings` —— 提交评分，body: `{"productId": 1001, "userId": 1, "score": 5}`（score 范围 1-5），返回 `202 Accepted`，写入通过 Kafka 异步完成
-- `GET /api/products/{productId}/score` —— 查询某商品的实时平均分与评分数，响应带 `source` 字段标出命中了哪一层缓存（`L1`/`L2`/`DB`）
+- `GET /api/products/{productId}/score` —— 查询某商品的实时平均分与评分数，响应带 `source` 字段标出命中了哪一层（`L1`/`L2`/`DB`/`DEGRADED`熔断降级），挂了分布式限流，超限返回 `429`
