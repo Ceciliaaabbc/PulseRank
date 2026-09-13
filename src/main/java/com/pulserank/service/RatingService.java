@@ -1,24 +1,24 @@
 package com.pulserank.service;
 
 import com.pulserank.dto.RatingRequest;
-import com.pulserank.entity.Rating;
-import com.pulserank.repository.ShardedRatingRepository;
+import com.pulserank.event.RatingSubmittedEvent;
 import org.springframework.stereotype.Service;
 
 @Service
 public class RatingService {
 
-    private final ShardedRatingRepository ratingRepository;
-    private final ScoreQueryService scoreQueryService;
+    private final RatingEventProducer ratingEventProducer;
 
-    public RatingService(ShardedRatingRepository ratingRepository, ScoreQueryService scoreQueryService) {
-        this.ratingRepository = ratingRepository;
-        this.scoreQueryService = scoreQueryService;
+    public RatingService(RatingEventProducer ratingEventProducer) {
+        this.ratingEventProducer = ratingEventProducer;
     }
 
-    public Rating submitRating(RatingRequest request) {
-        Rating saved = ratingRepository.insert(request.getProductId(), request.getUserId(), request.getScore());
-        scoreQueryService.evict(request.getProductId());
-        return saved;
+    /**
+     * 写路径改成只发 Kafka，不再同步落库——落库和缓存失效交给 RatingEventConsumer
+     * 异步完成。请求校验（@Valid）仍然是同步的，只有数据库写入被削峰。
+     */
+    public void submitRating(RatingRequest request) {
+        ratingEventProducer.publish(
+                new RatingSubmittedEvent(request.getProductId(), request.getUserId(), request.getScore()));
     }
 }

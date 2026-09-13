@@ -1,11 +1,12 @@
 package com.pulserank.controller;
 
 import com.pulserank.dto.ProductScoreResponse;
+import com.pulserank.dto.RatingAcceptedResponse;
 import com.pulserank.dto.RatingRequest;
-import com.pulserank.entity.Rating;
 import com.pulserank.service.RatingService;
 import com.pulserank.service.ScoreQueryService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,8 +28,11 @@ public class RatingController {
     }
 
     @PostMapping("/ratings")
-    public ResponseEntity<Rating> submitRating(@Valid @RequestBody RatingRequest request) {
-        return ResponseEntity.ok(ratingService.submitRating(request));
+    public ResponseEntity<RatingAcceptedResponse> submitRating(@Valid @RequestBody RatingRequest request) {
+        ratingService.submitRating(request);
+        RatingAcceptedResponse body = new RatingAcceptedResponse(
+                request.getProductId(), request.getUserId(), request.getScore());
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
     }
 
     @GetMapping("/products/{productId}/score")
