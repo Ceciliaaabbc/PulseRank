@@ -37,11 +37,13 @@ flowchart TB
 
     subgraph Obs["可观测性 (阶段6)"]
         direction LR
-        App["PulseRank"] -->|"/actuator/prometheus"| Prom["Prometheus"] --> Grafana["Grafana"]
+        Prom["Prometheus"] --> Grafana["Grafana 仪表盘"]
     end
 
     Client --> POST
     Client --> GET
+    Insert -.->|"/actuator/prometheus 暴露指标"| Prom
+    DB -.->|"/actuator/prometheus 暴露指标"| Prom
 ```
 
 ## 核心结果一览
