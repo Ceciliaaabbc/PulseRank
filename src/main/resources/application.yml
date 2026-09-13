@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: pulserank
+  datasource:
+    url: jdbc:mysql://localhost:3306/pulserank?useSSL=false&serverTimezone=UTC&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:pulserank}
+    password: ${DB_PASSWORD:pulserank123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+server:
+  port: 8081
