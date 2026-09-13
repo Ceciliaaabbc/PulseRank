@@ -1,5 +1,6 @@
 package com.pulserank.governance;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -23,13 +24,16 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     private static final String BUCKET_KEY = "ratelimit:products-score";
 
     private final TokenBucketRateLimiter rateLimiter;
+    private final MeterRegistry meterRegistry;
     private final int capacity;
     private final int refillPerSecond;
 
     public RateLimitInterceptor(TokenBucketRateLimiter rateLimiter,
+                                 MeterRegistry meterRegistry,
                                  @Value("${pulserank.ratelimit.capacity:50}") int capacity,
                                  @Value("${pulserank.ratelimit.refill-per-second:20}") int refillPerSecond) {
         this.rateLimiter = rateLimiter;
+        this.meterRegistry = meterRegistry;
         this.capacity = capacity;
         this.refillPerSecond = refillPerSecond;
     }
@@ -52,6 +56,7 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         if (allowed) {
             return true;
         }
+        meterRegistry.counter("pulserank.ratelimit.rejected").increment();
         response.setStatus(429);
         response.setContentType("application/json");
         response.getWriter().write("{\"error\":\"rate limited\"}");

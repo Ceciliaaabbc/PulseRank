@@ -2,7 +2,7 @@
 
 高并发实时评分聚合系统 —— 面向"高并发服务稳定性"方向的求职作品集项目。
 
-以"商品评分实时聚合"为业务场景（用户提交评分 → 实时计算平均分/评分数），逐阶段引入高并发场景下的稳定性技术点：多级缓存、异步削峰、分布式锁、自研限流熔断组件、JVM 调优、全链路压测与混沌工程。每个阶段都有明确的性能基线和可复现的验证数据。
+以"商品评分实时聚合"为业务场景（用户提交评分 → 实时计算平均分/评分数），逐阶段引入高并发场景下的稳定性技术点：多级缓存、异步削峰、分布式锁、自研限流熔断组件、JVM 调优、全链路压测与混沌工程、可观测性与内核调优。每个阶段都有明确的性能基线和可复现的验证数据，六个阶段全部完成。
 
 ## 技术栈
 
@@ -13,6 +13,7 @@
 - 评分写入走 Kafka 异步削峰，`POST /api/ratings` 只发消息立即返回，落库交给消费者异步完成（见阶段2 文档）
 - 自研分布式流量控制组件（`com.pulserank.governance`）：Redis+Lua 实现的分布式令牌桶限流、熔断状态机、热点探测自动延长本地缓存 TTL（见阶段3 文档）
 - 全链路压测 + 混沌工程验证：真实停 Redis/MySQL/Kafka 容器观察并修复了两个真实故障场景下的问题（限流器依赖故障导致 500、Kafka 重试导致评分重复插入），见阶段5 文档
+- Prometheus + Grafana 可观测性（含 `pulserank.score.source`/`ratelimit.rejected`/`circuitbreaker.state` 等自定义业务指标）+ Dockerfile 容器化 + 真实 Linux 环境下的内核参数调优实验，见阶段6 文档
 
 ## 项目进度
 
@@ -22,14 +23,24 @@
 - [x] 阶段3：自研分布式流量控制组件（详见 [docs/阶段3.md](docs/阶段3.md)）
 - [x] 阶段4：JVM 深度优化（详见 [docs/阶段4.md](docs/阶段4.md)）
 - [x] 阶段5：全链路压测 + 混沌工程（详见 [docs/阶段5.md](docs/阶段5.md)）
-- [ ] 阶段6：Linux/TCP 调优 + 可观测性
+- [x] 阶段6：Linux/TCP 调优 + 可观测性（详见 [docs/阶段6.md](docs/阶段6.md)）
 
 ## 本地运行
 
 ```bash
-docker compose up -d          # 启动 MySQL + Redis + Kafka
+docker compose up -d          # 启动 MySQL + Redis + Kafka + Prometheus + Grafana
 mvn clean package -DskipTests
 java -jar target/pulserank-0.0.1-SNAPSHOT.jar   # 默认端口 8081
+```
+
+- Grafana 面板：http://localhost:3000 （账号 admin/admin，仪表盘 "PulseRank" 已自动配好）
+- Prometheus：http://localhost:9090
+- 应用指标：http://localhost:8081/actuator/prometheus
+
+也可以用仓库根目录的 `Dockerfile` 把应用打成镜像（阶段6 用它做过 Linux 内核参数调优实验）：
+
+```bash
+docker build -t pulserank:latest .
 ```
 
 ## API

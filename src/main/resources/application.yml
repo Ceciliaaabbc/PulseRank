@@ -27,6 +27,27 @@ spring:
 
 server:
   port: 8081
+  tomcat:
+    accept-count: ${TOMCAT_ACCEPT_COUNT:100}
+    threads:
+      max: ${TOMCAT_MAX_THREADS:200}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: pulserank
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5,0.9,0.99
 
 pulserank:
   redis:

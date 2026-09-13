@@ -6,6 +6,7 @@ import com.pulserank.dto.ProductScoreResponse;
 import com.pulserank.governance.CircuitBreaker;
 import com.pulserank.governance.HotKeyDetector;
 import com.pulserank.repository.ShardedRatingRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.redisson.api.RBucket;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -32,17 +33,20 @@ public class ScoreQueryService {
     private final Cache<Long, CachedScore> localCache;
     private final CircuitBreaker circuitBreaker;
     private final HotKeyDetector hotKeyDetector;
+    private final MeterRegistry meterRegistry;
 
     public ScoreQueryService(ShardedRatingRepository ratingRepository,
                               RedissonClient redissonClient,
                               Cache<Long, CachedScore> localCache,
                               CircuitBreaker circuitBreaker,
-                              HotKeyDetector hotKeyDetector) {
+                              HotKeyDetector hotKeyDetector,
+                              MeterRegistry meterRegistry) {
         this.ratingRepository = ratingRepository;
         this.redissonClient = redissonClient;
         this.localCache = localCache;
         this.circuitBreaker = circuitBreaker;
         this.hotKeyDetector = hotKeyDetector;
+        this.meterRegistry = meterRegistry;
     }
 
     public ProductScoreResponse getProductScore(Long productId) {
@@ -152,6 +156,7 @@ public class ScoreQueryService {
     }
 
     private ProductScoreResponse degraded(Long productId) {
+        meterRegistry.counter("pulserank.score.source", "source", "DEGRADED").increment();
         return new ProductScoreResponse(productId, 0.0, 0, "DEGRADED");
     }
 
@@ -198,6 +203,7 @@ public class ScoreQueryService {
     }
 
     private ProductScoreResponse toResponse(Long productId, CachedScore cached, String source) {
+        meterRegistry.counter("pulserank.score.source", "source", source).increment();
         return new ProductScoreResponse(productId, cached.getAvgScore(), cached.getRatingCount(), source);
     }
 

@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: pulserank
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # 应用直接在宿主机上用 java -jar 跑，不在 docker-compose 的网络里，
+      # host.docker.internal 是 Docker Desktop 给容器访问宿主机端口的固定地址。
+      - targets: ["host.docker.internal:8081"]
