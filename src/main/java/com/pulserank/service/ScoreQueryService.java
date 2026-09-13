@@ -54,7 +54,7 @@ public class ScoreQueryService {
         }
 
         RBucket<CachedScore> bucket = redissonClient.getBucket(redisKey(productId));
-        cached = bucket.get();
+        cached = redisGet(bucket, productId);
         if (cached != null) {
             localCache.put(productId, cached);
             return toResponse(productId, cached, "L2");
@@ -75,31 +75,33 @@ public class ScoreQueryService {
         boolean locked = false;
         try {
             locked = lock.tryLock(LOCK_WAIT_MS, LOCK_LEASE_MS, TimeUnit.MILLISECONDS);
-            if (locked) {
-                CachedScore cached = bucket.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            // Redis 不可用时 Redisson 锁本身也拿不到——不把这个当成"没抢到锁"去排队等待，
+            // 直接降级到不加锁查库，避免 Redis 故障期间所有请求都卡在锁等待上。
+            log.warn("REDIS_UNAVAILABLE productId={} 分布式锁不可用，跳过加锁直接查库: {}", productId, e.getMessage());
+            return queryDirectly(productId);
+        }
+
+        if (locked) {
+            try {
+                CachedScore cached = redisGet(bucket, productId);
                 if (cached != null) {
                     localCache.put(productId, cached);
                     return toResponse(productId, cached, "L2");
                 }
-                CachedScore fresh = queryDatabaseGuarded(productId);
-                if (fresh == null) {
-                    return degraded(productId);
+                return queryDirectly(productId);
+            } finally {
+                if (lock.isHeldByCurrentThread()) {
+                    lock.unlock();
                 }
-                bucket.set(fresh, REDIS_TTL);
-                localCache.put(productId, fresh);
-                return toResponse(productId, fresh, "DB");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            if (locked && lock.isHeldByCurrentThread()) {
-                lock.unlock();
             }
         }
 
         for (int i = 0; i < MISS_POLL_RETRIES; i++) {
             sleep(MISS_POLL_INTERVAL_MS);
-            CachedScore cached = bucket.get();
+            CachedScore cached = redisGet(bucket, productId);
             if (cached != null) {
                 localCache.put(productId, cached);
                 return toResponse(productId, cached, "L2-wait");
@@ -107,11 +109,18 @@ public class ScoreQueryService {
         }
 
         log.warn("productId={} 等锁超时仍未等到缓存重建，降级直接查库", productId);
+        return queryDirectly(productId);
+    }
+
+    private ProductScoreResponse queryDirectly(Long productId) {
         CachedScore fresh = queryDatabaseGuarded(productId);
         if (fresh == null) {
             return degraded(productId);
         }
-        return toResponse(productId, fresh, "DB-fallback");
+        RBucket<CachedScore> bucket = redissonClient.getBucket(redisKey(productId));
+        redisSet(bucket, fresh, productId);
+        localCache.put(productId, fresh);
+        return toResponse(productId, fresh, "DB");
     }
 
     /**
@@ -146,9 +155,38 @@ public class ScoreQueryService {
         return new ProductScoreResponse(productId, 0.0, 0, "DEGRADED");
     }
 
+    /**
+     * evict 在评分写入之后、Kafka 消费者线程里调用：这里绝对不能把 Redis 异常
+     * 往外抛。抛出去会被 Spring Kafka 的重试机制当成"这条消息处理失败"重新
+     * 投递，而 insert 已经成功执行过一次——重试会导致同一条评分被重复插入，
+     * 从"缓存暂时脏一会"变成"数据本身被写错"，后者严重得多。真出故障时，
+     * 缓存最多在 TTL 内多返回几次旧值，之后自然过期刷新。
+     */
     public void evict(Long productId) {
         localCache.invalidate(productId);
-        redissonClient.getBucket(redisKey(productId)).delete();
+        try {
+            redissonClient.getBucket(redisKey(productId)).delete();
+        } catch (RuntimeException e) {
+            log.warn("REDIS_UNAVAILABLE productId={} 缓存失效失败(Redis不可用)，L2会在TTL内保留旧值: {}",
+                    productId, e.getMessage());
+        }
+    }
+
+    private CachedScore redisGet(RBucket<CachedScore> bucket, Long productId) {
+        try {
+            return bucket.get();
+        } catch (RuntimeException e) {
+            log.warn("REDIS_UNAVAILABLE productId={} L2缓存读取失败，当作未命中处理: {}", productId, e.getMessage());
+            return null;
+        }
+    }
+
+    private void redisSet(RBucket<CachedScore> bucket, CachedScore value, Long productId) {
+        try {
+            bucket.set(value, REDIS_TTL);
+        } catch (RuntimeException e) {
+            log.warn("REDIS_UNAVAILABLE productId={} L2缓存写入失败，本次查询结果不会被缓存: {}", productId, e.getMessage());
+        }
     }
 
     private String redisKey(Long productId) {
